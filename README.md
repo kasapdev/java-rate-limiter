@@ -1,6 +1,6 @@
 # java-rate-limiter
 
-[![CI](https://github.com/kasapdev/java-rate-limiter/actions/workflows/ci.yml/badge.svg)](https://github.com/kasapdev/java-rate-limiter/actions/workflows/ci.yml)
+[![CI](https://github.com/kasapdev/java-rate-limiter/actions/workflows/ci.yml/badge.svg)](https://github.com/kasapdev/java-rate-limiter/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
 
 A zero-dependency Java library providing two thread-safe rate limiting strategies:
 `TokenBucketRateLimiter` (classic token bucket with continuous wall-clock refill) and
