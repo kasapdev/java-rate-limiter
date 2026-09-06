@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
+## [1.2.0] - 2026-09-06
+
+### Added
+
+- `TokenBucketRateLimiter.tryAcquire(int cost, long timeout, TimeUnit unit)` — a blocking
+  variant of `tryAcquire` that waits (without busy-looping) for enough tokens to refill, up to
+  the given timeout, instead of failing fast. Computes the exact sleep interval needed from the
+  refill rate and returns `false` immediately, without waiting out the timeout, for requests
+  that could never succeed (cost greater than capacity, or a zero refill rate with too few
+  tokens already available).
+
 ## [1.1.0] - 2026-09-06
 
 ### Added

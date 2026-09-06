@@ -18,6 +18,12 @@ public final class TokenBucketRateLimiterTest {
         testConcurrencyWithRefillNeverExceedsBucketMath();
         testCostGreaterThanCapacityAlwaysRejected();
         testAcquiringExactlyCapacityInOneCallSucceeds();
+        testBlockingAcquireSucceedsImmediatelyWhenTokensAvailable();
+        testBlockingAcquireWaitsForRefillThenSucceeds();
+        testBlockingAcquireTimesOutWhenRefillTooSlow();
+        testBlockingAcquireRejectsCostGreaterThanCapacityImmediately();
+        testBlockingAcquireRejectsZeroRefillWithInsufficientTokensImmediately();
+        testBlockingAcquireInvalidArgsRejected();
 
         TestKit.finish();
     }
@@ -62,13 +68,13 @@ public final class TokenBucketRateLimiterTest {
         TestKit.check("bucket refills up to capacity after enough elapsed time", limiter.availableTokens() == 10);
     }
 
-    private static void testInvalidConstructorArgsRejected() {
+    private static void testInvalidConstructorArgsRejected() throws InterruptedException {
         TestKit.check("zero capacity rejected", throwsIllegalArgument(() -> new TokenBucketRateLimiter(0, 1.0)));
         TestKit.check("negative capacity rejected", throwsIllegalArgument(() -> new TokenBucketRateLimiter(-1, 1.0)));
         TestKit.check("negative refill rate rejected", throwsIllegalArgument(() -> new TokenBucketRateLimiter(10, -1.0)));
     }
 
-    private static void testInvalidCostRejected() {
+    private static void testInvalidCostRejected() throws InterruptedException {
         TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(10, 1.0);
         TestKit.check("zero cost rejected", throwsIllegalArgument(() -> limiter.tryAcquire(0)));
         TestKit.check("negative cost rejected", throwsIllegalArgument(() -> limiter.tryAcquire(-5)));
@@ -156,11 +162,88 @@ public final class TokenBucketRateLimiterTest {
                 successes.get() <= maxAllowed);
     }
 
-    private interface ThrowingRunnable {
-        void run();
+    private static void testBlockingAcquireSucceedsImmediatelyWhenTokensAvailable() throws InterruptedException {
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(10, 0.0);
+        long start = System.nanoTime();
+        boolean acquired = limiter.tryAcquire(3, 1, TimeUnit.SECONDS);
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+        TestKit.check("blocking acquire succeeds immediately when tokens are already available", acquired);
+        TestKit.check("blocking acquire did not wait when tokens were already available",
+                elapsedMillis < 500);
+        TestKit.check("blocking acquire deducted the requested cost", limiter.availableTokens() == 7);
     }
 
-    private static boolean throwsIllegalArgument(ThrowingRunnable r) {
+    private static void testBlockingAcquireWaitsForRefillThenSucceeds() throws InterruptedException {
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(5, 100.0); // 100 tokens/sec
+        TestKit.check("drain the bucket before blocking-acquire test", limiter.tryAcquire(5));
+
+        long start = System.nanoTime();
+        boolean acquired = limiter.tryAcquire(1, 500, TimeUnit.MILLISECONDS);
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+        TestKit.check("blocking acquire succeeds once enough time passes for refill", acquired);
+        TestKit.check("blocking acquire returned well before the full timeout elapsed "
+                        + "(took " + elapsedMillis + "ms)",
+                elapsedMillis < 400);
+    }
+
+    private static void testBlockingAcquireTimesOutWhenRefillTooSlow() throws InterruptedException {
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(5, 1.0); // 1 token/sec: far too slow
+        TestKit.check("drain the bucket before timeout test", limiter.tryAcquire(5));
+
+        long start = System.nanoTime();
+        boolean acquired = limiter.tryAcquire(5, 60, TimeUnit.MILLISECONDS);
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+        TestKit.check("blocking acquire times out when the refill rate can't satisfy it in time",
+                !acquired);
+        TestKit.check("blocking acquire waited roughly the full timeout before giving up "
+                        + "(took " + elapsedMillis + "ms)",
+                elapsedMillis >= 50);
+    }
+
+    private static void testBlockingAcquireRejectsCostGreaterThanCapacityImmediately() throws InterruptedException {
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(5, 10.0);
+        long start = System.nanoTime();
+        boolean acquired = limiter.tryAcquire(6, 2, TimeUnit.SECONDS);
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+        TestKit.check("blocking acquire rejects a cost greater than capacity", !acquired);
+        TestKit.check("blocking acquire does not wait out the timeout for an impossible request "
+                        + "(took " + elapsedMillis + "ms)",
+                elapsedMillis < 500);
+    }
+
+    private static void testBlockingAcquireRejectsZeroRefillWithInsufficientTokensImmediately() throws InterruptedException {
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(5, 0.0);
+        TestKit.check("drain the zero-refill bucket before the test", limiter.tryAcquire(5));
+
+        long start = System.nanoTime();
+        boolean acquired = limiter.tryAcquire(1, 2, TimeUnit.SECONDS);
+        long elapsedMillis = (System.nanoTime() - start) / 1_000_000;
+
+        TestKit.check("blocking acquire rejects immediately when refill rate is zero and tokens are insufficient",
+                !acquired);
+        TestKit.check("blocking acquire does not wait out the timeout when waiting can never help "
+                        + "(took " + elapsedMillis + "ms)",
+                elapsedMillis < 500);
+    }
+
+    private static void testBlockingAcquireInvalidArgsRejected() throws InterruptedException {
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(10, 1.0);
+        TestKit.check("zero cost rejected for blocking acquire",
+                throwsIllegalArgument(() -> limiter.tryAcquire(0, 100, TimeUnit.MILLISECONDS)));
+        TestKit.check("negative cost rejected for blocking acquire",
+                throwsIllegalArgument(() -> limiter.tryAcquire(-5, 100, TimeUnit.MILLISECONDS)));
+        TestKit.check("negative timeout rejected for blocking acquire",
+                throwsIllegalArgument(() -> limiter.tryAcquire(1, -1, TimeUnit.MILLISECONDS)));
+    }
+
+    private interface ThrowingRunnable {
+        void run() throws InterruptedException;
+    }
+
+    private static boolean throwsIllegalArgument(ThrowingRunnable r) throws InterruptedException {
         try {
             r.run();
             return false;

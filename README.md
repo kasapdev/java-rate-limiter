@@ -33,8 +33,10 @@ On Windows, replace `$(find ... -name "*.java")` with an explicit file list, or 
 import dev.kasapdev.ratelimiter.TokenBucketRateLimiter;
 import dev.kasapdev.ratelimiter.SlidingWindowRateLimiter;
 
+import java.util.concurrent.TimeUnit;
+
 public class Example {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws InterruptedException {
         // Allow bursts up to 20 requests, refilling at 5 tokens/second.
         TokenBucketRateLimiter bucket = new TokenBucketRateLimiter(20, 5.0);
         if (bucket.tryAcquire(1)) {
@@ -43,6 +45,13 @@ public class Example {
             // reject: too many requests
         }
         System.out.println("Tokens left: " + bucket.availableTokens());
+
+        // Block for up to 500ms waiting for a token instead of failing fast.
+        if (bucket.tryAcquire(1, 500, TimeUnit.MILLISECONDS)) {
+            // handle request
+        } else {
+            // gave up waiting: still no tokens after 500ms
+        }
 
         // Allow at most 100 requests per 60-second rolling window.
         SlidingWindowRateLimiter window = new SlidingWindowRateLimiter(100, 60_000);
@@ -61,6 +70,10 @@ public class Example {
   starting full at `capacity`, refilling continuously at the given rate.
 - `boolean tryAcquire(int cost)` — refills based on elapsed time, then attempts to deduct
   `cost` tokens; returns whether it succeeded. Thread-safe.
+- `boolean tryAcquire(int cost, long timeout, TimeUnit unit)` — blocks until `cost` tokens can
+  be acquired or `timeout` elapses, whichever comes first. Sleeps for computed intervals
+  instead of busy-waiting, and returns `false` immediately (without waiting out the timeout) if
+  the request could never succeed, e.g. `cost` exceeds `capacity`.
 - `int availableTokens()` — current token count (after applying any owed refill), floored to
   an integer.
 
