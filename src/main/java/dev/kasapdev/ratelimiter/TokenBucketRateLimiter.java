@@ -1,5 +1,6 @@
 package dev.kasapdev.ratelimiter;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -61,6 +62,71 @@ public final class TokenBucketRateLimiter {
             return false;
         } finally {
             lock.unlock();
+        }
+    }
+
+    /**
+     * Blocks until {@code cost} tokens can be acquired or {@code timeout} elapses, whichever
+     * happens first.
+     *
+     * <p>Unlike {@link #tryAcquire(int)}, which fails immediately if the bucket does not
+     * currently hold enough tokens, this method computes how long the bucket needs to refill
+     * enough to grant the request and sleeps for (at most) that long before retrying. It never
+     * busy-waits: each retry is preceded by a computed sleep, and the method returns as soon as
+     * the request can be satisfied or the deadline passes.
+     *
+     * <p>If the request can never be satisfied — {@code cost} exceeds {@code capacity}, or the
+     * bucket currently has too few tokens and the refill rate is {@code 0} — this returns
+     * {@code false} immediately without waiting out the full timeout.
+     *
+     * @param cost    number of tokens requested; must be positive
+     * @param timeout maximum time to wait for the tokens to become available; must not be negative
+     * @param unit    the unit of {@code timeout}
+     * @return {@code true} if the tokens were acquired before the timeout elapsed, {@code false}
+     *         otherwise
+     * @throws InterruptedException if the calling thread is interrupted while waiting
+     */
+    public boolean tryAcquire(int cost, long timeout, TimeUnit unit) throws InterruptedException {
+        if (cost <= 0) {
+            throw new IllegalArgumentException("cost must be positive, got " + cost);
+        }
+        if (timeout < 0) {
+            throw new IllegalArgumentException("timeout must not be negative, got " + timeout);
+        }
+        if (cost > capacity) {
+            // Can never be satisfied: the bucket can never hold more than `capacity` tokens.
+            return false;
+        }
+
+        long deadlineNanos = System.nanoTime() + unit.toNanos(timeout);
+        while (true) {
+            long waitNanos;
+            lock.lock();
+            try {
+                refill();
+                if (availableTokens >= cost) {
+                    availableTokens -= cost;
+                    return true;
+                }
+                double missing = cost - availableTokens;
+                waitNanos = refillTokensPerSecond > 0
+                        ? (long) Math.ceil(missing / refillTokensPerSecond * 1_000_000_000.0)
+                        : -1; // refill rate is zero: waiting can never help
+            } finally {
+                lock.unlock();
+            }
+
+            if (waitNanos < 0) {
+                return false;
+            }
+
+            long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                return false;
+            }
+
+            long sleepNanos = Math.min(waitNanos, remainingNanos);
+            TimeUnit.NANOSECONDS.sleep(sleepNanos);
         }
     }
 
