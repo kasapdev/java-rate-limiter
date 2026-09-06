@@ -16,8 +16,26 @@ public final class TokenBucketRateLimiterTest {
         testAvailableTokensNeverExceedsCapacity();
         testConcurrencyNoRefillNeverExceedsCapacity();
         testConcurrencyWithRefillNeverExceedsBucketMath();
+        testCostGreaterThanCapacityAlwaysRejected();
+        testAcquiringExactlyCapacityInOneCallSucceeds();
 
         TestKit.finish();
+    }
+
+    private static void testCostGreaterThanCapacityAlwaysRejected() {
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(5, 0.0);
+        TestKit.check(
+                "a cost greater than capacity is rejected even on a full bucket",
+                !limiter.tryAcquire(6));
+        TestKit.check(
+                "a rejected over-capacity request does not mutate the available tokens",
+                limiter.availableTokens() == 5);
+    }
+
+    private static void testAcquiringExactlyCapacityInOneCallSucceeds() {
+        TokenBucketRateLimiter limiter = new TokenBucketRateLimiter(7, 0.0);
+        TestKit.check("acquiring exactly the full capacity in one call succeeds", limiter.tryAcquire(7));
+        TestKit.check("bucket is exactly empty after acquiring exactly its capacity", limiter.availableTokens() == 0);
     }
 
     private static void testInitialCapacityAndBasicAcquire() {

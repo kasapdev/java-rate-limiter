@@ -12,8 +12,26 @@ public final class SlidingWindowRateLimiterTest {
         testWindowSlidesAndAdmitsAgainAfterExpiry();
         testInvalidConstructorArgsRejected();
         testConcurrencyNeverExceedsMaxRequestsWithinWindow();
+        testFreshLimiterHasZeroCount();
+        testRejectedAttemptDoesNotChangeCount();
 
         TestKit.finish();
+    }
+
+    private static void testFreshLimiterHasZeroCount() {
+        SlidingWindowRateLimiter limiter = new SlidingWindowRateLimiter(5, 10_000);
+        TestKit.check("a brand-new limiter with no requests yet reports currentCount() == 0", limiter.currentCount() == 0);
+    }
+
+    private static void testRejectedAttemptDoesNotChangeCount() {
+        SlidingWindowRateLimiter limiter = new SlidingWindowRateLimiter(2, 10_000);
+        TestKit.check("1st request admitted", limiter.tryAcquire());
+        TestKit.check("2nd request admitted", limiter.tryAcquire());
+        int countBeforeRejection = limiter.currentCount();
+        TestKit.check("3rd request is rejected (window full)", !limiter.tryAcquire());
+        TestKit.check(
+                "a rejected attempt does not change currentCount()",
+                limiter.currentCount() == countBeforeRejection);
     }
 
     private static void testBasicAdmissionUpToLimit() {
