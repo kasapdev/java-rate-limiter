@@ -21,3 +21,4 @@ jobs:
         run: |
           java -cp out dev.kasapdev.ratelimiter.TokenBucketRateLimiterTest
           java -cp out dev.kasapdev.ratelimiter.SlidingWindowRateLimiterTest
+          java -cp out dev.kasapdev.ratelimiter.LeakyBucketRateLimiterTest

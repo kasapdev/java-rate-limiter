@@ -2,9 +2,10 @@
 
 [![CI](https://github.com/kasapdev/java-rate-limiter/actions/workflows/ci.yml/badge.svg)](https://github.com/kasapdev/java-rate-limiter/actions/workflows/ci.yml) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) ![Java](https://img.shields.io/badge/Java-17-ED8B00?logo=openjdk&logoColor=white)
 
-A zero-dependency Java library providing two thread-safe rate limiting strategies:
-`TokenBucketRateLimiter` (classic token bucket with continuous wall-clock refill) and
-`SlidingWindowRateLimiter` (fixed request cap within a rolling time window). Pure Java 17,
+A zero-dependency Java library providing three thread-safe rate limiting strategies:
+`TokenBucketRateLimiter` (classic token bucket with continuous wall-clock refill),
+`SlidingWindowRateLimiter` (fixed request cap within a rolling time window), and
+`LeakyBucketRateLimiter` (fixed-capacity bucket that drains at a constant rate). Pure Java 17,
 no external libraries, no build tool required.
 
 ## Build & Run
@@ -22,6 +23,7 @@ JAVA="/path/to/jdk/bin/java"
 # Run the tests
 "$JAVA" -cp out dev.kasapdev.ratelimiter.TokenBucketRateLimiterTest
 "$JAVA" -cp out dev.kasapdev.ratelimiter.SlidingWindowRateLimiterTest
+"$JAVA" -cp out dev.kasapdev.ratelimiter.LeakyBucketRateLimiterTest
 ```
 
 On Windows, replace `$(find ... -name "*.java")` with an explicit file list, or run the
@@ -32,6 +34,7 @@ On Windows, replace `$(find ... -name "*.java")` with an explicit file list, or 
 ```java
 import dev.kasapdev.ratelimiter.TokenBucketRateLimiter;
 import dev.kasapdev.ratelimiter.SlidingWindowRateLimiter;
+import dev.kasapdev.ratelimiter.LeakyBucketRateLimiter;
 
 import java.util.concurrent.TimeUnit;
 
@@ -58,6 +61,45 @@ public class Example {
         if (window.tryAcquire()) {
             // handle request
         }
+
+        // Smooth out bursts: queue up to 10 requests, draining at 2 requests/second.
+        LeakyBucketRateLimiter leaky = new LeakyBucketRateLimiter(10, 2.0);
+        for (int i = 0; i < 15; i++) {
+            if (leaky.tryAcquire()) {
+                System.out.println("request " + i + " admitted, level=" + leaky.currentLevel());
+            } else {
+                System.out.println("request " + i + " rejected: bucket full");
+            }
+        }
+    }
+}
+```
+
+## Leaky Bucket Rate Limiter
+
+`LeakyBucketRateLimiter` models a fixed-capacity bucket that starts empty. Each admitted
+request raises the bucket's fill level by one, up to `capacity`; the bucket continuously
+leaks (drains) at a constant `leakRatePerSecond`, computed lazily from elapsed wall-clock
+time (`System.nanoTime()`) on every call — there is no background thread. This makes it a
+good fit for smoothing bursty traffic into a steady downstream rate, as opposed to
+`TokenBucketRateLimiter`, which allows short bursts up to its full capacity as long as
+tokens are available.
+
+```java
+import dev.kasapdev.ratelimiter.LeakyBucketRateLimiter;
+
+public class LeakyBucketExample {
+    public static void main(String[] args) {
+        // Queue up to 10 requests; the queue drains at 2 requests/second.
+        LeakyBucketRateLimiter limiter = new LeakyBucketRateLimiter(10, 2.0);
+
+        if (limiter.tryAcquire()) {
+            // request admitted: forward it downstream at the leak rate
+        } else {
+            // bucket is full: reject or shed this request
+        }
+
+        System.out.println("Current fill level: " + limiter.currentLevel());
     }
 }
 ```
@@ -84,6 +126,16 @@ public class Example {
 - `boolean tryAcquire()` — prunes expired timestamps and admits the request if the window
   isn't full; thread-safe under concurrent callers.
 - `int currentCount()` — number of requests currently counted within the window.
+
+### `LeakyBucketRateLimiter`
+
+- `LeakyBucketRateLimiter(int capacity, double leakRatePerSecond)` — creates a bucket
+  starting empty at level 0, with room for `capacity` requests, draining continuously at the
+  given rate.
+- `boolean tryAcquire()` — applies any leak owed for elapsed time, then admits the request
+  (raising the level by one) if there's room; returns whether it was admitted. Thread-safe.
+- `int currentLevel()` — current fill level (after applying any owed leak), rounded up to an
+  integer.
 
 ## License
 
